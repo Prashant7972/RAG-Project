@@ -4,6 +4,7 @@ import faiss
 import numpy as np
 import streamlit as st
 from google import genai
+from google.genai import types
 from pypdf import PdfReader
 from fastembed import TextEmbedding
 
@@ -13,6 +14,9 @@ MAX_QUESTIONS = 15
 # Fast model first, stronger model as backup.
 # If you get a "404 NOT_FOUND" error, the message tells you the replacement name.
 MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+
+# Owner-only debug switch: add  DEBUG = "true"  in the app's Secrets to see real errors.
+DEBUG = str(st.secrets.get("DEBUG", "")).lower() in ("1", "true", "yes")
 
 st.set_page_config(page_title="Chat with your document", page_icon="📄")
 st.title("📄 Chat with your document")
@@ -33,7 +37,11 @@ def embed(texts, embedder):
 
 @st.cache_resource
 def get_client():
-    return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    # 30-second limit per request, so a slow model can't freeze the app
+    return genai.Client(
+        api_key=st.secrets["GEMINI_API_KEY"].strip(),
+        http_options=types.HttpOptions(timeout=30_000),
+    )
 
 
 def read_file(f):
@@ -103,8 +111,8 @@ def stream_answer(question, history, index, chunks, embedder):
                     raise  # failed halfway through an answer
                 last_error = e
                 msg = str(e)
-                if "404" in msg:
-                    break  # model not available, go to the backup model
+                if "404" in msg or "timed out" in msg.lower() or "timeout" in msg.lower():
+                    break  # model unavailable or too slow, go to the backup model
                 if "503" in msg or "429" in msg:
                     time.sleep(1)
                     continue
@@ -190,5 +198,14 @@ if user_input:
                 st.session_state.messages.append({"role": "assistant", "content": reply})
                 st.session_state.q_count += 1
             except Exception as e:
-                print("Gemini error:", e)  # shows in your terminal, not to visitors
-                st.error("The AI service is busy or unavailable. Please try again in a minute.")
+                print("App error:", type(e).__name__, e, flush=True)  # shows in your logs
+                st.session_state.messages.pop()  # remove the unanswered question
+                msg = str(e)
+                if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                    st.error("Too many requests right now (free-tier limit). Please wait a minute and try again.")
+                elif "API key" in msg or "401" in msg or "403" in msg or "400" in msg:
+                    st.error("The app's API key isn't working. The app owner needs to update it.")
+                else:
+                    st.error("The AI service is busy or unavailable. Please try again in a minute.")
+                if DEBUG:
+                    st.code(f"{type(e).__name__}: {e}")
