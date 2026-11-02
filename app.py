@@ -5,7 +5,7 @@ import numpy as np
 import streamlit as st
 from google import genai
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 MAX_MB = 5
 MAX_QUESTIONS = 15
@@ -21,7 +21,14 @@ st.caption("Don't upload sensitive documents. Files are processed in memory only
 
 @st.cache_resource
 def load_embedder():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    # Light, fast embedding model (no PyTorch needed)
+    return TextEmbedding("BAAI/bge-small-en-v1.5")
+
+
+def embed(texts, embedder):
+    vecs = np.array(list(embedder.embed(texts)), dtype="float32")
+    faiss.normalize_L2(vecs)
+    return vecs
 
 
 @st.cache_resource
@@ -36,7 +43,7 @@ def read_file(f):
     return f.read().decode("utf-8", errors="ignore")
 
 
-def chunk_text(text, size=800, overlap=150):
+def chunk_text(text, size=1000, overlap=150):
     chunks, start = [], 0
     while start < len(text):
         chunks.append(text[start:start + size])
@@ -45,8 +52,7 @@ def chunk_text(text, size=800, overlap=150):
 
 
 def build_index(chunks, embedder):
-    emb = embedder.encode(chunks, normalize_embeddings=True)
-    emb = np.array(emb, dtype="float32")
+    emb = embed(chunks, embedder)
     index = faiss.IndexFlatIP(emb.shape[1])
     index.add(emb)
     return index
@@ -57,7 +63,7 @@ def stream_answer(question, history, index, chunks, embedder):
     # 1. Find relevant chunks (include the previous question so follow-ups work)
     previous_user_msgs = [m["content"] for m in history if m["role"] == "user"]
     search_text = (previous_user_msgs[-1] + " " + question) if previous_user_msgs else question
-    q = embedder.encode([search_text], normalize_embeddings=True).astype("float32")
+    q = embed([search_text], embedder)
     k = min(4, len(chunks))
     _, ids = index.search(q, k)
     context = "\n\n".join(chunks[i] for i in ids[0])
