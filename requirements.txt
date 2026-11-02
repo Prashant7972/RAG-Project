@@ -1,6 +1,6 @@
 streamlit
 faiss-cpu
-sentence-transformers
+fastembed
 pypdf
 google-genai
 numpy
