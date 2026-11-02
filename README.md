@@ -1,7 +1,6 @@
 # 📄 Chat with your document (RAG)
 
-🔗 **Live demo:** https://your-app.streamlit.app
-
+🔗 **Live demo:** https://prashant7972-rag-project-app-akxla5.streamlit.app/
 Upload a PDF or TXT file and ask questions about it.
 The app may take ~30 seconds to wake up if it hasn't been used recently.
 
